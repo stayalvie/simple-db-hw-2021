@@ -9,6 +9,8 @@ import simpledb.common.Utility;
 import simpledb.storage.*;
 import simpledb.systemtest.SimpleDbTestBase;
 
+import java.util.Iterator;
+
 public class TupleTest extends SimpleDbTestBase {
 
     /**
@@ -16,7 +18,7 @@ public class TupleTest extends SimpleDbTestBase {
      */
     @Test public void modifyFields() {
         TupleDesc td = Utility.getTupleDesc(2);
-
+        td.toString();
         Tuple tup = new Tuple(td);
         tup.setField(0, new IntField(-1));
         tup.setField(1, new IntField(0));
@@ -37,7 +39,9 @@ public class TupleTest extends SimpleDbTestBase {
     @Test public void getTupleDesc() {
         TupleDesc td = Utility.getTupleDesc(5);
         Tuple tup = new Tuple(td);
+        System.out.println(tup.toString());
         assertEquals(td, tup.getTupleDesc());
+
     }
 
     /**
@@ -49,14 +53,30 @@ public class TupleTest extends SimpleDbTestBase {
         RecordId rid1 = new RecordId(pid1, 0);
         tup1.setRecordId(rid1);
 
-	try {
-	    assertEquals(rid1, tup1.getRecordId());
-	} catch (java.lang.UnsupportedOperationException e) {
-		//rethrow the exception with an explanation
-    	throw new UnsupportedOperationException("modifyRecordId() test failed due to " +
-    			"RecordId.equals() not being implemented.  This is not required for Lab 1, " +
-    			"but should pass when you do implement the RecordId class.");
-	}
+        try {
+            assertEquals(rid1, tup1.getRecordId());
+        } catch (java.lang.UnsupportedOperationException e) {
+            //rethrow the exception with an explanation
+            throw new UnsupportedOperationException("modifyRecordId() test failed due to " +
+                    "RecordId.equals() not being implemented.  This is not required for Lab 1, " +
+                    "but should pass when you do implement the RecordId class.");
+        }
+    }
+
+    /**
+     *
+     */
+    @Test public void testIterator(){
+
+        Tuple tup1 = new Tuple(Utility.getTupleDesc(3));
+
+        Iterator<Field> fields = tup1.fields();
+
+        while (fields.hasNext()) {
+            Field field = fields.next();
+            System.out.println(field);
+        }
+
     }
 
     /**

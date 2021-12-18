@@ -24,7 +24,6 @@ public class SimpleDb {
                     int numOfAttributes = Integer.parseInt(args[2]);
                     Type[] ts = new Type[numOfAttributes];
                     char fieldSeparator = ',';
-
                     if (args.length == 3)
                         for (int i = 0; i < numOfAttributes; i++)
                             ts[i] = Type.INT_TYPE;

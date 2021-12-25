@@ -4,12 +4,17 @@ import simpledb.common.Database;
 import simpledb.common.Permissions;
 import simpledb.common.DbException;
 import simpledb.common.DeadlockException;
+import simpledb.transaction.Transaction;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
 import java.io.*;
 
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -38,8 +43,16 @@ public class BufferPool {
      *
      * @param numPages maximum number of pages in this buffer pool.
      */
+    private int numPages;
+    private int curNumPages;
+    private final Object numLock;
+    private ConcurrentHashMap<PageId, ControllerPageMsg> data;
     public BufferPool(int numPages) {
         // some code goes here
+        this.numPages = numPages;
+        this.curNumPages = 0;
+        data = new ConcurrentHashMap<>();
+        numLock = new Object();
     }
     
     public static int getPageSize() {
@@ -50,7 +63,7 @@ public class BufferPool {
     public static void setPageSize(int pageSize) {
     	BufferPool.pageSize = pageSize;
     }
-    
+
     // THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!
     public static void resetPageSize() {
     	BufferPool.pageSize = DEFAULT_PAGE_SIZE;
@@ -71,10 +84,34 @@ public class BufferPool {
      * @param pid the ID of the requested page
      * @param perm the requested permissions on the page
      */
+    /*
+    *
+    * TODO: 这里面的设计暂且还待定
+    * */
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
-        return null;
+        if (!data.contains(pid)) {
+            synchronized (numLock) {
+                if (curNumPages >= numPages) throw new DbException("bufferPool overflow");
+                curNumPages ++;
+                DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
+                ControllerPageMsg c = new ControllerPageMsg(dbFile.readPage(pid), pid);
+                data.put(pid, c);
+            }
+        }
+        ControllerPageMsg c = data.get(pid);
+
+        if (perm == Permissions.READ_ONLY) {
+            Lock lock = c.rw.readLock();
+            lock.lock();
+            c.ownReader.add(tid);
+        }else {
+            Lock lock = c.rw.writeLock();
+            lock.lock();
+            c.ownWriter.add(tid);
+        }
+        return c.page;
     }
 
     /**
@@ -82,6 +119,7 @@ public class BufferPool {
      * Calling this is very risky, and may result in wrong behavior. Think hard
      * about who needs to call this and why, and why they can run the risk of
      * calling it.
+     *   ??? deadLock? 需要强制释放获得到的资源？
      *
      * @param tid the ID of the transaction requesting the unlock
      * @param pid the ID of the page to unlock
@@ -89,6 +127,8 @@ public class BufferPool {
     public  void unsafeReleasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
+
+
     }
 
     /**
@@ -99,6 +139,7 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) {
         // some code goes here
         // not necessary for lab1|lab2
+
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
@@ -207,6 +248,27 @@ public class BufferPool {
     private synchronized  void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
+    }
+
+
+    /*
+    * TODO: do more controller Msg . for example: dityPage
+    * */
+    static class ControllerPageMsg{
+        Page page;
+        PageId pageId;
+        ReadWriteLock rw;
+        Set<TransactionId> ownWriter;
+        Set<TransactionId> ownReader;
+
+
+        public ControllerPageMsg(Page page, PageId pageId) {
+            this.page = page;
+            this.pageId = pageId;
+            this.rw = new ReentrantReadWriteLock();
+            this.ownWriter = new HashSet<>();
+            this.ownReader = new HashSet<>();
+        }
     }
 
 }

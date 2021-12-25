@@ -27,8 +27,12 @@ public class Catalog {
      * Constructor.
      * Creates a new, empty catalog.
      */
+    Map<Integer, Table> tables;
+    Map<String, Integer> nameToId;
     public Catalog() {
         // some code goes here
+        tables = new HashMap<>();
+        nameToId = new HashMap<>();
     }
 
     /**
@@ -42,6 +46,12 @@ public class Catalog {
      */
     public void addTable(DbFile file, String name, String pkeyField) {
         // some code goes here
+        Table t = new Table(file, name, pkeyField);
+        if (nameToId.containsKey(name)) {
+            tables.remove(nameToId.get(name));
+        }
+        nameToId.put(name, file.getId());
+        tables.put(file.getId(), t);
     }
 
     public void addTable(DbFile file, String name) {
@@ -58,14 +68,18 @@ public class Catalog {
     public void addTable(DbFile file) {
         addTable(file, (UUID.randomUUID()).toString());
     }
-
+    /*
+     * TODO: 不清楚是反映射一下还是什么的
+     * */
     /**
      * Return the id of the table with a specified name,
      * @throws NoSuchElementException if the table doesn't exist
      */
     public int getTableId(String name) throws NoSuchElementException {
         // some code goes here
-        return 0;
+
+        if (nameToId.containsKey(name)) return nameToId.get(name);
+        throw new NoSuchElementException();
     }
 
     /**
@@ -76,7 +90,7 @@ public class Catalog {
      */
     public TupleDesc getTupleDesc(int tableid) throws NoSuchElementException {
         // some code goes here
-        return null;
+        return tables.get(tableid).tupleDesc;
     }
 
     /**
@@ -87,12 +101,12 @@ public class Catalog {
      */
     public DbFile getDatabaseFile(int tableid) throws NoSuchElementException {
         // some code goes here
-        return null;
+        return tables.get(tableid).file;
     }
 
     public String getPrimaryKey(int tableid) {
         // some code goes here
-        return null;
+        return tables.get(tableid).pkeyField;
     }
 
     public Iterator<Integer> tableIdIterator() {
@@ -102,12 +116,13 @@ public class Catalog {
 
     public String getTableName(int id) {
         // some code goes here
-        return null;
+        return tables.get(id).name;
     }
     
     /** Delete all tables from the catalog */
     public void clear() {
         // some code goes here
+        tables.clear();
     }
     
     /**

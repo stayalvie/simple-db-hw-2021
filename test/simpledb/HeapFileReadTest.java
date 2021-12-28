@@ -77,6 +77,7 @@ public class HeapFileReadTest extends SimpleDbTestBase {
         // NOTE(ghuo): we try not to dig too deeply into the Page API here; we
         // rely on HeapPageTest for that. perform some basic checks.
         assertEquals(484, page.getNumEmptySlots());
+        System.out.println(page.isSlotUsed(1));
         assertTrue(page.isSlotUsed(1));
         assertFalse(page.isSlotUsed(20));
     }

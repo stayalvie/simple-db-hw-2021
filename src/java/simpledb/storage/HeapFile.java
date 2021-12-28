@@ -7,6 +7,7 @@ import simpledb.common.Permissions;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
+import javax.xml.crypto.dsig.keyinfo.PGPData;
 import java.io.*;
 import java.util.*;
 
@@ -29,8 +30,12 @@ public class HeapFile implements DbFile {
      *            the file that stores the on-disk backing store for this heap
      *            file.
      */
+    private File f;
+    private TupleDesc td;
     public HeapFile(File f, TupleDesc td) {
         // some code goes here
+        this.f = f;
+        this.td = td;
     }
 
     /**
@@ -40,7 +45,7 @@ public class HeapFile implements DbFile {
      */
     public File getFile() {
         // some code goes here
-        return null;
+        return f.getAbsoluteFile();
     }
 
     /**
@@ -54,7 +59,7 @@ public class HeapFile implements DbFile {
      */
     public int getId() {
         // some code goes here
-        throw new UnsupportedOperationException("implement this");
+        return f.getAbsoluteFile().hashCode();
     }
 
     /**
@@ -64,13 +69,24 @@ public class HeapFile implements DbFile {
      */
     public TupleDesc getTupleDesc() {
         // some code goes here
-        throw new UnsupportedOperationException("implement this");
+        return td;
     }
 
     // see DbFile.java for javadocs
     public Page readPage(PageId pid) {
         // some code goes here
-        return null;
+        try {
+            RandomAccessFile raf = new RandomAccessFile(f, "r");
+            int pagesize = BufferPool.getPageSize();
+            byte[] b = new byte[pagesize];
+            raf.seek(pid.getPageNumber() * pagesize);
+            raf.read(b, 0, pagesize);
+            raf.close();
+            return new HeapPage((HeapPageId)pid, b);
+        } catch(Exception e) {
+            e.printStackTrace();
+            throw new IllegalArgumentException();
+        }
     }
 
     // see DbFile.java for javadocs
@@ -84,7 +100,7 @@ public class HeapFile implements DbFile {
      */
     public int numPages() {
         // some code goes here
-        return 0;
+        return (int) (f.length() / BufferPool.getPageSize());
     }
 
     // see DbFile.java for javadocs
@@ -103,10 +119,54 @@ public class HeapFile implements DbFile {
         // not necessary for lab1
     }
 
+    /*
+    * TODO: Iterator如何去优化
+    * */
     // see DbFile.java for javadocs
     public DbFileIterator iterator(TransactionId tid) {
         // some code goes here
-        return null;
+        return new DbFileIterator() {
+            private TransactionId tid;
+            private int pageNo;
+            private Iterator<Tuple> tupleItr;
+            @Override
+            public void open() throws DbException, TransactionAbortedException {
+                pageNo = 0;
+                HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), pageNo), Permissions.READ_ONLY);
+                tupleItr = page.iterator();
+            }
+
+            @Override
+            public boolean hasNext() throws DbException, TransactionAbortedException {
+                if (tupleItr == null) throw new IllegalStateException("close");
+                if (!tupleItr.hasNext() && pageNo < numPages()) return false;
+
+                while (!tupleItr.hasNext() && pageNo < numPages()) {
+                    HeapPage p = (HeapPage) Database.getBufferPool()
+                            .getPage(tid, new HeapPageId(getId(), pageNo), Permissions.READ_ONLY);
+                    tupleItr = p.iterator();
+                    pageNo ++;
+                }
+                return tupleItr.hasNext();
+            }
+
+            @Override
+            public Tuple next() throws DbException, TransactionAbortedException, NoSuchElementException {
+                if (!hasNext()) throw new NoSuchElementException("no tuple");
+                return tupleItr.next();
+            }
+
+            @Override
+            public void rewind() throws DbException, TransactionAbortedException {
+                if (tupleItr == null) throw new IllegalStateException("close");
+                open();
+            }
+
+            @Override
+            public void close() {
+                tupleItr = null;
+            }
+        };
     }
 
 }

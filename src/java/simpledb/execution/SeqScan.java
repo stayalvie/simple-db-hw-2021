@@ -1,13 +1,9 @@
 package simpledb.execution;
 
-import simpledb.common.Database;
+import simpledb.common.*;
+import simpledb.storage.*;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
-import simpledb.common.Type;
-import simpledb.common.DbException;
-import simpledb.storage.DbFileIterator;
-import simpledb.storage.Tuple;
-import simpledb.storage.TupleDesc;
 
 import java.util.*;
 
@@ -19,6 +15,10 @@ import java.util.*;
 public class SeqScan implements OpIterator {
 
     private static final long serialVersionUID = 1L;
+
+    private TransactionId tid;
+    private int tableId;
+    private String tableAlias;
 
     /**
      * Creates a sequential scan over the specified table as a part of the
@@ -38,6 +38,10 @@ public class SeqScan implements OpIterator {
      */
     public SeqScan(TransactionId tid, int tableid, String tableAlias) {
         // some code goes here
+
+        this.tableAlias = tableAlias;
+        this.tableId = tableid;
+        this.tid = tid;
     }
 
     /**
@@ -46,16 +50,15 @@ public class SeqScan implements OpIterator {
      *       be the actual name of the table in the catalog of the database
      * */
     public String getTableName() {
-        return null;
+        return Database.getCatalog().getTableName(tableId);
     }
 
     /**
      * @return Return the alias of the table this operator scans.
      * */
-    public String getAlias()
-    {
+    public String getAlias() {
         // some code goes here
-        return null;
+        return tableAlias;
     }
 
     /**
@@ -72,14 +75,26 @@ public class SeqScan implements OpIterator {
      */
     public void reset(int tableid, String tableAlias) {
         // some code goes here
+        this.tableAlias = tableAlias;
+        this.tableId = tableid;
     }
 
     public SeqScan(TransactionId tid, int tableId) {
         this(tid, tableId, Database.getCatalog().getTableName(tableId));
     }
 
+    private int curPageNo;
+    private Iterator<Tuple> curPage;
+    private int totalPagesNum;
     public void open() throws DbException, TransactionAbortedException {
         // some code goes here
+        curPageNo = 0;
+        HeapPage page = (HeapPage) Database.getBufferPool()
+                .getPage(tid, new HeapPageId(tableId, curPageNo), Permissions.READ_ONLY);
+        HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(tableId);
+        totalPagesNum = databaseFile.numPages();
+        curPage = page.iterator();
+        curPageNo ++;
     }
 
     /**
@@ -94,26 +109,52 @@ public class SeqScan implements OpIterator {
      */
     public TupleDesc getTupleDesc() {
         // some code goes here
-        return null;
+        TupleDesc desc = Database.getCatalog().getTupleDesc(tableId);
+        int fieldNums = desc.numFields();
+        Type[] fieldType = new Type[fieldNums];
+        String[] aliasName = new String[fieldNums];
+        Iterator<TupleDesc.TDItem> iterator = desc.iterator();
+        int i = 0;
+        while (iterator.hasNext()) {
+            TupleDesc.TDItem next = iterator.next();
+            fieldType[i] = next.fieldType;
+            String sb = Objects.requireNonNullElse(tableAlias, "null") +
+                    "." +
+                    Objects.requireNonNullElse(next.fieldName, "null");
+            aliasName[i ++] = sb;
+        }
+        return new TupleDesc(fieldType, aliasName);
     }
 
     public boolean hasNext() throws TransactionAbortedException, DbException {
         // some code goes here
-        return false;
+        if (curPage == null) throw new IllegalStateException("close");
+        if (!curPage.hasNext() && curPageNo < totalPagesNum ) {
+            HeapPage page = (HeapPage) Database.getBufferPool()
+                    .getPage(tid, new HeapPageId(tableId, curPageNo), Permissions.READ_ONLY);
+            curPage = page.iterator();
+            curPageNo ++;
+
+        }
+        return curPage.hasNext();
     }
 
     public Tuple next() throws NoSuchElementException,
             TransactionAbortedException, DbException {
         // some code goes here
-        return null;
+        if (!hasNext()) throw new NoSuchElementException("no next Tuple");
+        return curPage.next();
     }
 
     public void close() {
         // some code goes here
+        curPage = null;
     }
 
     public void rewind() throws DbException, NoSuchElementException,
             TransactionAbortedException {
         // some code goes here
+        if (curPage == null) throw new IllegalStateException("close");
+        open();
     }
 }

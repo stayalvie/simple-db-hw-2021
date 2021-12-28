@@ -46,7 +46,7 @@ public class BufferPool {
     private int numPages;
     private int curNumPages;
     private final Object numLock;
-    private ConcurrentHashMap<PageId, ControllerPageMsg> data;
+    private ConcurrentHashMap<PageId, HeapPage> data;
     public BufferPool(int numPages) {
         // some code goes here
         this.numPages = numPages;
@@ -91,27 +91,30 @@ public class BufferPool {
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
-        if (!data.contains(pid)) {
+        if (!data.containsKey(pid)) {
             synchronized (numLock) {
                 if (curNumPages >= numPages) throw new DbException("bufferPool overflow");
                 curNumPages ++;
-                DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
-                ControllerPageMsg c = new ControllerPageMsg(dbFile.readPage(pid), pid);
-                data.put(pid, c);
+                HeapFile dbFile = (HeapFile) Database.getCatalog().getDatabaseFile(pid.getTableId());
+                HeapPageId c = new HeapPageId(pid.getTableId(), pid.getPageNumber());
+                data.put(pid, (HeapPage) dbFile.readPage(pid));
             }
         }
-        ControllerPageMsg c = data.get(pid);
-
-        if (perm == Permissions.READ_ONLY) {
-            Lock lock = c.rw.readLock();
-            lock.lock();
-            c.ownReader.add(tid);
-        }else {
-            Lock lock = c.rw.writeLock();
-            lock.lock();
-            c.ownWriter.add(tid);
-        }
-        return c.page;
+        /*
+        * TODO: 对页面的锁如何去写？？？？
+        * */
+//        Lock lock;
+//        if (perm == Permissions.READ_ONLY) {
+//            lock = c.rw.readLock();
+//            lock.lock();
+//            c.ownReader.add(tid);
+//        }else {
+//            lock = c.rw.writeLock();
+//            lock.lock();
+//            c.ownWriter.add(tid);
+//        }
+//        lock.unlock();
+        return data.get(pid);
     }
 
     /**
@@ -253,7 +256,12 @@ public class BufferPool {
 
     /*
     * TODO: do more controller Msg . for example: dityPage
+    *
+    * 原来人家已经写好类了， 是我写之前想太多了， 但是对于他的那个还是感觉没有dityPage
+    *
+    * 还是上面的 TODO思考
     * */
+    @Deprecated
     static class ControllerPageMsg{
         Page page;
         PageId pageId;

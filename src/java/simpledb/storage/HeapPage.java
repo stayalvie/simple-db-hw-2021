@@ -25,6 +25,8 @@ public class HeapPage implements Page {
     final byte[] header;
     final Tuple[] tuples;
     final int numSlots;
+    private boolean dirty;
+    private TransactionId markTid;
 
     byte[] oldData;
     private final Byte oldDataLock = (byte) 0;
@@ -249,8 +251,16 @@ public class HeapPage implements Page {
     public void deleteTuple(Tuple t) throws DbException {
         // some code goes here
         // not necessary for lab1
+        if (!t.getRecordId().getPageId().equals(pid) ||
+                !getTupleNumberUse(t.getRecordId().getTupleNumber()))
+            throw new DbException("no this tuple");
+        markSlotUsed(t.getRecordId().getTupleNumber(), false);
     }
-
+    private boolean getTupleNumberUse(int tupleNumber) {
+        int index = tupleNumber / 8;
+        int mod = tupleNumber % 8;
+        return ((header[index] & 0xff) & (1 << mod)) != 0;
+    }
     /**
      * Adds the specified tuple to the page;  the tuple should be updated to reflect
      * that it is now stored on this page.
@@ -261,7 +271,16 @@ public class HeapPage implements Page {
      */
     public void insertTuple(Tuple t) throws DbException {
         // some code goes here
-        // not necessary for lab1
+        if (getNumEmptySlots() == 0 || !td.equals(t.getTupleDesc())) throw new DbException("no slot");
+
+        for (int i = 0; i < getNumTuples(); i ++) {
+            if (!isSlotUsed(i)) {
+                markSlotUsed(i, true);
+                t.setRecordId(new RecordId(pid, i));
+                tuples[i] = t;
+                break;
+            }
+        }
     }
 
     /**
@@ -270,7 +289,8 @@ public class HeapPage implements Page {
      */
     public void markDirty(boolean dirty, TransactionId tid) {
         // some code goes here
-        // not necessary for lab1
+        this.dirty = dirty;
+        this.markTid = tid;
     }
 
     /**
@@ -278,7 +298,7 @@ public class HeapPage implements Page {
      */
     public TransactionId isDirty() {
         // some code goes here
-        // Not necessary for lab1
+        if (dirty) return markTid;
         return null;
     }
 
@@ -298,16 +318,20 @@ public class HeapPage implements Page {
 
         int n = 0;
         for (int i = 0; i < getHeaderSize(); i++) {
-            int b = header[i];
             // 不能用b<<<1，因为1是int类型
-            if ((b & 1) != 0) n += 1;
-            if ((b & 2) != 0) n += 1;
-            if ((b & 4) != 0) n += 1;
-            if ((b & 8) != 0) n += 1;
-            if ((b & 16) != 0) n += 1;
-            if ((b & 32) != 0) n += 1;
-            if ((b & 64) != 0) n += 1;
-            if ((b & 128) != 0) n += 1;
+//            if ((b & 1) != 0) n += 1;
+//            if ((b & 2) != 0) n += 1;
+//            if ((b & 4) != 0) n += 1;
+//            if ((b & 8) != 0) n += 1;
+//            if ((b & 16) != 0) n += 1;
+//            if ((b & 32) != 0) n += 1;
+//            if ((b & 64) != 0) n += 1;
+//            if ((b & 128) != 0) n += 1;
+            int b = (header[i] & 0xFF);  //将其转话为无符号
+            for (int j = 0; j < 8; j ++) {
+                int bit = ((b >> j) & 1);
+                if (bit == 1) n += 1;
+            }
         }
         return getNumTuples() - n;
     }
@@ -330,7 +354,11 @@ public class HeapPage implements Page {
      */
     private void markSlotUsed(int i, boolean value) {
         // some code goes here
-        // not necessary for lab1
+
+        int index = i / 8;
+        int y = i % 8;
+        if (value) header[index] += (1 << y);
+        else header[index] -= (1 << y);
     }
 
     /**

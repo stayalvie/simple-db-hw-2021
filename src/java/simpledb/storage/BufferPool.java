@@ -46,13 +46,18 @@ public class BufferPool {
     private int numPages;
     private int curNumPages;
     private final Object numLock;
+    /*
+    *   TODO: 是否进行重构存储的容器， 到写 驱逐方法的时候进行重构
+    * */
     private ConcurrentHashMap<PageId, HeapPage> data;
+    private ConcurrentHashMap<PageId, ControllerPageMsg> controllerMsg;
     public BufferPool(int numPages) {
         // some code goes here
         this.numPages = numPages;
         this.curNumPages = 0;
         data = new ConcurrentHashMap<>();
         numLock = new Object();
+        controllerMsg = new ConcurrentHashMap<>();
     }
     
     public static int getPageSize() {
@@ -91,6 +96,9 @@ public class BufferPool {
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
+        /*
+        * TODO 如何书写驱逐方法
+        * */
         if (!data.containsKey(pid)) {
             synchronized (numLock) {
                 if (curNumPages >= numPages) throw new DbException("bufferPool overflow");
@@ -98,22 +106,40 @@ public class BufferPool {
                 HeapFile dbFile = (HeapFile) Database.getCatalog().getDatabaseFile(pid.getTableId());
                 HeapPageId c = new HeapPageId(pid.getTableId(), pid.getPageNumber());
                 data.put(pid, (HeapPage) dbFile.readPage(pid));
+                controllerMsg.put(pid, new ControllerPageMsg());
             }
         }
         /*
-        * TODO: 对页面的锁如何去写？？？？
+        * 对页面的锁如何去写？？？？
+        *  完成TDO
         * */
-//        Lock lock;
-//        if (perm == Permissions.READ_ONLY) {
-//            lock = c.rw.readLock();
-//            lock.lock();
-//            c.ownReader.add(tid);
-//        }else {
-//            lock = c.rw.writeLock();
-//            lock.lock();
-//            c.ownWriter.add(tid);
-//        }
-//        lock.unlock();
+        ControllerPageMsg controllerPageMsg = controllerMsg.get(pid);
+        if (perm == Permissions.READ_ONLY) {
+
+            try {
+                controllerPageMsg.rw.readLock().lockInterruptibly();
+                controllerPageMsg.ownReader.add(tid);
+                /*
+                * TODO: 解锁
+                * */
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+                throw new TransactionAbortedException();
+            }
+        }else {
+            try {
+                controllerPageMsg.rw.writeLock().lockInterruptibly();
+                controllerPageMsg.writerPidLocker = tid;
+                /*
+                * TODO: 解锁
+                * */
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+                throw new TransactionAbortedException();
+            }
+        }
+
+
         return data.get(pid);
     }
 
@@ -260,21 +286,17 @@ public class BufferPool {
     * 原来人家已经写好类了， 是我写之前想太多了， 但是对于他的那个还是感觉没有dityPage
     *
     * 还是上面的 TODO思考
+    *
+    * 迭代
+    *   完成TODO 抄袭mysql的理论 每一个页面都有起对应的控制信息
     * */
-    @Deprecated
     static class ControllerPageMsg{
-        Page page;
-        PageId pageId;
         ReadWriteLock rw;
-        Set<TransactionId> ownWriter;
+        TransactionId writerPidLocker;
         Set<TransactionId> ownReader;
 
-
-        public ControllerPageMsg(Page page, PageId pageId) {
-            this.page = page;
-            this.pageId = pageId;
+        public ControllerPageMsg() {
             this.rw = new ReentrantReadWriteLock();
-            this.ownWriter = new HashSet<>();
             this.ownReader = new HashSet<>();
         }
     }

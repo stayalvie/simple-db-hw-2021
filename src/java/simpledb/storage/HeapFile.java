@@ -109,11 +109,35 @@ public class HeapFile implements DbFile {
         // some code goes here
 
         List<Page> pages = new ArrayList<>();
-        HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, t.getRecordId().getPageId(), Permissions.READ_WRITE);
-        page.insertTuple(t);
-        page.markDirty(true, tid);
 
+        for (int i = 0; i < numPages(); i ++) {
+            HeapPage p = (HeapPage)Database.getBufferPool().getPage(tid, new HeapPageId(getId(), i), Permissions.READ_ONLY);
+            if (p.getNumEmptySlots() == 0) {
+                //释放 当前页的读的权限
+                Database.getBufferPool().releaseLock(tid, new HeapPageId(getId(), i), Permissions.READ_ONLY);
+            }else {
+                //
+                Database.getBufferPool().releaseLock(tid, new HeapPageId(getId(), i), Permissions.READ_ONLY);
+                HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), i), Permissions.READ_WRITE);
+                page.insertTuple(t);
+                page.markDirty(true, tid);
+                pages.add(page);
+                return pages;
+            }
+        }
 
+        // 本文件没有对应的页或者所有页都已经满了需要开辟新的页
+        HeapPage p = (HeapPage)Database.getBufferPool().getPage(tid, new HeapPageId(getId(), numPages()), Permissions.READ_WRITE);
+
+        BufferedOutputStream bw = new BufferedOutputStream(new FileOutputStream(f, true));
+        byte[] emptyData = HeapPage.createEmptyPageData();
+        bw.write(emptyData);
+        bw.close();
+
+        p.insertTuple(t);
+        //writePage(p); 目前功能没有实现
+
+        pages.add(p);
         return pages;
     }
 
@@ -125,7 +149,7 @@ public class HeapFile implements DbFile {
         HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, t.getRecordId().getPageId(), Permissions.READ_WRITE);
         page.deleteTuple(t);
         page.markDirty(true, tid);
-
+        Database.getBufferPool().releaseLock(tid,t.getRecordId().getPageId(), Permissions.READ_WRITE);
         return pages;
         // not necessary for lab1
     }
@@ -145,12 +169,13 @@ public class HeapFile implements DbFile {
                 pageNo = 0;
                 HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), pageNo), Permissions.READ_ONLY);
                 tupleItr = page.iterator();
+                ++ pageNo;
             }
 
             @Override
             public boolean hasNext() throws DbException, TransactionAbortedException {
                 if (tupleItr == null) throw new IllegalStateException("close");
-                if (!tupleItr.hasNext() && pageNo < numPages()) return false;
+                if (!tupleItr.hasNext() && pageNo >= numPages()) return false;
 
                 while (!tupleItr.hasNext() && pageNo < numPages()) {
                     HeapPage p = (HeapPage) Database.getBufferPool()

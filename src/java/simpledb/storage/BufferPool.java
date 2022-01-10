@@ -1,5 +1,6 @@
 package simpledb.storage;
 
+import org.w3c.dom.Node;
 import simpledb.common.Database;
 import simpledb.common.Permissions;
 import simpledb.common.DbException;
@@ -10,10 +11,14 @@ import simpledb.transaction.TransactionId;
 
 import java.io.*;
 
+import java.security.Permission;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
@@ -45,19 +50,26 @@ public class BufferPool {
      */
     private int numPages;
     private int curNumPages;
-    private final Object numLock;
     /*
     *   TODO: 是否进行重构存储的容器， 到写 驱逐方法的时候进行重构
     * */
-    private ConcurrentHashMap<PageId, HeapPage> data;
+    private ConcurrentHashMap<PageId, Page> data;
     private ConcurrentHashMap<PageId, ControllerPageMsg> controllerMsg;
+
+
+
+
     public BufferPool(int numPages) {
         // some code goes here
         this.numPages = numPages;
-        this.curNumPages = 0;
         data = new ConcurrentHashMap<>();
-        numLock = new Object();
         controllerMsg = new ConcurrentHashMap<>();
+        curNumPages = 0;
+        head = new Node();
+        tail = new Node();
+        head.next = tail;
+        tail.pre = head;
+        lock =  new ReentrantReadWriteLock();
     }
     
     public static int getPageSize() {
@@ -97,16 +109,35 @@ public class BufferPool {
         throws TransactionAbortedException, DbException {
         // some code goes here
         /*
-        * TODO 如何书写驱逐方法
+        * TODO 如何书写驱逐方法? 读写锁吧， 太多东西要考虑了？
+        *
+        *
+        * 以前的方案：
+        *    1. concurrentHashmap  + concurrentLinkedQueue, 无法实现因为size不准确
+        *    2. 自己实现双链表， 有无办法更细粒度的锁 ？？ 目前没有想到
+        *
+        * 初步方案：
+        *    1. 对于lru加读写锁， 将页面写到 缓存池中加写锁
+        *    2. 读取当前页面的话获取读锁
+        *    3. 在淘汰页面的时候应该考虑 当前页面是否有事务
+        *
+        *
         * */
         if (!data.containsKey(pid)) {
-            synchronized (numLock) {
-                if (curNumPages >= numPages) throw new DbException("bufferPool overflow");
-                curNumPages ++;
+
+            lock.writeLock();
+            try {
+                if (curNumPages >= numPages) {
+                    evictPage();
+                }
                 HeapFile dbFile = (HeapFile) Database.getCatalog().getDatabaseFile(pid.getTableId());
                 HeapPageId c = new HeapPageId(pid.getTableId(), pid.getPageNumber());
-                data.put(pid, (HeapPage) dbFile.readPage(pid));
+                Page page = dbFile.readPage(pid);
+                data.put(pid,  dbFile.readPage(pid));
                 controllerMsg.put(pid, new ControllerPageMsg());
+                insertNode(c, page);
+            } finally {
+                lock.writeLock().unlock();
             }
         }
         /*
@@ -138,8 +169,6 @@ public class BufferPool {
                 throw new TransactionAbortedException();
             }
         }
-
-
         return data.get(pid);
     }
 
@@ -169,6 +198,20 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1|lab2
 
+    }
+
+    public void releaseLock(TransactionId tid, PageId pid, Permissions p) {
+
+        ControllerPageMsg controllerPageMsg = controllerMsg.get(pid);
+
+        if (controllerPageMsg == null) return;
+        if (p == Permissions.READ_ONLY) {
+            controllerPageMsg.ownReader.remove(tid);
+            controllerPageMsg.rw.readLock().unlock();
+        }else {
+            controllerPageMsg.writerPidLocker = null;
+            controllerPageMsg.rw.writeLock().unlock();
+        }
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
@@ -209,6 +252,17 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(tableId);
+        List<Page> pages = databaseFile.insertTuple(tid, t);
+
+        for (Page p : pages) {
+            p.markDirty(true, tid);
+            if (!data.containsKey(p.getId())) {
+                data.put(p.getId(), p);
+                controllerMsg.put(p.getId(), new ControllerPageMsg());
+            }
+        }
+
     }
 
     /**
@@ -228,6 +282,9 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        int tableId = t.getRecordId().getPageId().getTableId();
+        HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(tableId);
+        ArrayList<Page> pages = databaseFile.deleteTuple(tid, t);
     }
 
     /**
@@ -238,8 +295,9 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
-
     }
+
+
 
     /** Remove the specific page id from the buffer pool.
         Needed by the recovery manager to ensure that the
@@ -277,6 +335,8 @@ public class BufferPool {
     private synchronized  void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
+        Node node = removeTail();
+
     }
 
 
@@ -301,4 +361,72 @@ public class BufferPool {
         }
     }
 
+
+
+    /*
+     * 一下为实现驱逐策略
+     *
+     * TODO: 有没有更细粒度的锁来进行实现?
+     *  目前是没有办法的因为我们在去判断size的时候 还有一个问题就是 我淘汰的时候size的原子性子么保证
+     *
+     * */
+    // 将某一个页面从中间删除
+    private void moveToHead(Node node) {
+    }
+    //一定插入头部
+    private void insertNode(PageId pageId, Page v) {
+//        head.lock.lock();
+//        try {
+//            node.next = head.next;
+//            node.pre = head;
+//            head.next.lock.lock();  //改变了 head.next。pre所以要对head.next进行获取锁
+//            try {
+//                head.next.pre = node;
+//            } finally {
+//                head.next.lock.unlock();
+//            }
+//            head.next = node;
+//        } finally {
+//            head.lock.unlock();
+//        }
+        Node node = new Node(pageId);
+        node.next = head.next;
+        node.pre = head;
+        head.next.pre = node;
+        head.next = node;
+        curNumPages ++;
+        data.put(pageId, v);
+
+    }
+    //删除尾部
+    private Node removeTail() {
+        Node node;
+        if (curNumPages < numPages) return null;
+        node = removeNode(tail.pre);
+        return node;
+    }
+
+    private Node removeNode(Node node) {
+        node.pre.next = node.next;
+        node.next.pre = node.pre;
+        node.pre = null;
+        node.next = null;
+        return node;
+    }
+
+    private Node head;
+    private Node tail;
+    private ReentrantReadWriteLock lock; //改变双向链表中间节点的时候需要获取的节点
+    class Node {
+        PageId pageId;
+        Node next;
+        Node pre;
+
+        public Node(PageId pageId) {
+            this.pageId = pageId;
+        }
+        public Node() {
+        }
+
+    }
 }

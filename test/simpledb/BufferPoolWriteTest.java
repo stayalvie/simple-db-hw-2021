@@ -111,6 +111,7 @@ public class BufferPoolWriteTest extends TestUtil.CreateHeapFile {
     		Tuple t = tuples.get(i);
         	Database.getBufferPool().deleteTuple(tid, t);
         	HeapPage p = (HeapPage) Database.getBufferPool().getPage(tid, t.getRecordId().getPageId(), Permissions.READ_ONLY);
+        	Database.getBufferPool().releaseLock(tid, t.getRecordId().getPageId(), Permissions.READ_ONLY);
         	assertEquals(i+1, p.getNumEmptySlots());
         }
     	
@@ -119,6 +120,7 @@ public class BufferPoolWriteTest extends TestUtil.CreateHeapFile {
     		Tuple t = tuples.get(i+504);
         	Database.getBufferPool().deleteTuple(tid, t);
         	HeapPage p = (HeapPage) Database.getBufferPool().getPage(tid, t.getRecordId().getPageId(), Permissions.READ_ONLY);
+			Database.getBufferPool().releaseLock(tid, t.getRecordId().getPageId(), Permissions.READ_ONLY);
         	assertEquals(i+1, p.getNumEmptySlots());
         }
     }

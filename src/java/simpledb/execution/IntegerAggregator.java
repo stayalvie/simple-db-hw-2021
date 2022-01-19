@@ -58,6 +58,7 @@ public class IntegerAggregator implements Aggregator {
      */
     public void mergeTupleIntoGroup(Tuple tup) {
         // some code goes here
+        if (tup.getField(afield) == null) return ;
         gbName = gbField == NO_GROUPING ? tup.getTupleDesc().getFieldName(gbField) : "";
         Field index = gbField == NO_GROUPING ? new IntField(-1) : tup.getField(gbField);
         IntField field = (IntField) tup.getField(afield);
@@ -113,7 +114,7 @@ public class IntegerAggregator implements Aggregator {
             boolean flag = false;
             @Override
             public void open() throws DbException, TransactionAbortedException {
-                entry = aResult.entrySet().iterator();
+
                 Type[] types;
                 String[] strings;
                 if (gbField == NO_GROUPING){
@@ -126,6 +127,7 @@ public class IntegerAggregator implements Aggregator {
                 if (td == null)
                     td = new TupleDesc(types, strings);
                 flag = true;
+                entry = aResult.entrySet().iterator();
             }
 
             @Override

@@ -181,6 +181,11 @@
             <include name="bin/*.sh"/>
         </fileset>
     </copy>
+        <javac srcdir="${src.dir}" destdir="${build.classes.dir}" debug="on" deprecation="on" optimize="off" includes="**">
+            <!--给编译器指定编码，防止出现："警告： 编码 GBK 的不可映射字符"-->
+            <compilerarg line="-encoding UTF-8 "/>
+            <classpath refid="build.classpath" />
+        </javac>
     </target>
 
     <target name="javadocs" description="Build javadoc documentation">

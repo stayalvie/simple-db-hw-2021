@@ -49,11 +49,10 @@ public class BufferPool {
      * @param numPages maximum number of pages in this buffer pool.
      */
     private int numPages;
-    private int curNumPages;
     /*
     *   TODO: 是否进行重构存储的容器， 到写 驱逐方法的时候进行重构
     * */
-    private ConcurrentHashMap<PageId, Page> data;
+    private ConcurrentHashMap<PageId, PageNode> data;
     private ConcurrentHashMap<PageId, ControllerPageMsg> controllerMsg;
 
 
@@ -64,12 +63,11 @@ public class BufferPool {
         this.numPages = numPages;
         data = new ConcurrentHashMap<>();
         controllerMsg = new ConcurrentHashMap<>();
-        curNumPages = 0;
-        head = new Node();
-        tail = new Node();
+        head = new PageNode();
+        tail = new PageNode();
         head.next = tail;
         tail.pre = head;
-        lock =  new ReentrantReadWriteLock();
+        lock =  new Object();
     }
     
     public static int getPageSize() {
@@ -117,59 +115,57 @@ public class BufferPool {
         *    2. 自己实现双链表， 有无办法更细粒度的锁 ？？ 目前没有想到
         *
         * 初步方案：
-        *    1. 对于lru加读写锁， 将页面写到 缓存池中加写锁
-        *    2. 读取当前页面的话获取读锁
-        *    3. 在淘汰页面的时候应该考虑 当前页面是否有事务
+        *    1. 大锁
+        *    2. 在淘汰页面的时候应该考虑 当前页面是否有事务
         *
         *
         * */
-        if (!data.containsKey(pid)) {
 
-            lock.writeLock();
-            try {
-                if (curNumPages >= numPages) {
-                    evictPage();
+        synchronized (lock) {
+            if (!data.containsKey(pid)) {
+                    if (data.size() >= numPages) {
+                        evictPage();
+                    }
+                    DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
+                    Page page = dbFile.readPage(pid);
+                    PageNode pageNode = new PageNode(pid, page);
+                    data.put(pid, pageNode);
+                    if (!controllerMsg.containsKey(pid))
+                        controllerMsg.put(pid, new ControllerPageMsg());
+                    insertNode(pageNode);
+            }
+            /*
+             * 对页面的锁如何去写？？？？
+             *  完成TDO
+             * */
+            ControllerPageMsg controllerPageMsg = controllerMsg.get(pid);
+            if (perm == Permissions.READ_ONLY) {
+
+                try {
+                    controllerPageMsg.rw.readLock().lockInterruptibly();
+                    controllerPageMsg.ownReader.add(tid);
+                    /*
+                     * TODO: 解锁
+                     * */
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                    throw new TransactionAbortedException();
                 }
-                HeapFile dbFile = (HeapFile) Database.getCatalog().getDatabaseFile(pid.getTableId());
-                HeapPageId c = new HeapPageId(pid.getTableId(), pid.getPageNumber());
-                Page page = dbFile.readPage(pid);
-                data.put(pid,  dbFile.readPage(pid));
-                controllerMsg.put(pid, new ControllerPageMsg());
-                insertNode(c, page);
-            } finally {
-                lock.writeLock().unlock();
+            } else {
+                try {
+                    controllerPageMsg.rw.writeLock().lockInterruptibly();
+                    controllerPageMsg.writerPidLocker = tid;
+                    /*
+                     * TODO: 解锁
+                     * */
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                    throw new TransactionAbortedException();
+                }
             }
-        }
-        /*
-        * 对页面的锁如何去写？？？？
-        *  完成TDO
-        * */
-        ControllerPageMsg controllerPageMsg = controllerMsg.get(pid);
-        if (perm == Permissions.READ_ONLY) {
 
-            try {
-                controllerPageMsg.rw.readLock().lockInterruptibly();
-                controllerPageMsg.ownReader.add(tid);
-                /*
-                * TODO: 解锁
-                * */
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-                throw new TransactionAbortedException();
-            }
-        }else {
-            try {
-                controllerPageMsg.rw.writeLock().lockInterruptibly();
-                controllerPageMsg.writerPidLocker = tid;
-                /*
-                * TODO: 解锁
-                * */
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-                throw new TransactionAbortedException();
-            }
+            return data.get(pid).page;
         }
-        return data.get(pid);
     }
 
     /**
@@ -252,13 +248,12 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
-        HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(tableId);
+        DbFile databaseFile = Database.getCatalog().getDatabaseFile(tableId);
         List<Page> pages = databaseFile.insertTuple(tid, t);
-
         for (Page p : pages) {
             p.markDirty(true, tid);
             if (!data.containsKey(p.getId())) {
-                data.put(p.getId(), p);
+                data.put(p.getId(), new PageNode(p.getId(), p));
                 controllerMsg.put(p.getId(), new ControllerPageMsg());
             }
         }
@@ -283,8 +278,9 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1
         int tableId = t.getRecordId().getPageId().getTableId();
-        HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(tableId);
-        ArrayList<Page> pages = databaseFile.deleteTuple(tid, t);
+        DbFile databaseFile = Database.getCatalog().getDatabaseFile(tableId);
+
+        databaseFile.deleteTuple(tid, t);
     }
 
     /**
@@ -295,6 +291,9 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
+        for (PageNode pageNode : data.values()) {
+            Database.getCatalog().getDatabaseFile(pageNode.pageId.getTableId()).writePage(pageNode.page);
+        }
     }
 
 
@@ -310,6 +309,10 @@ public class BufferPool {
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
+        if (!data.containsKey(pid)) return;
+        PageNode pageNode = data.get(pid);
+        removeNode(pageNode);
+        data.remove(pageNode.pageId);
     }
 
     /**
@@ -319,6 +322,13 @@ public class BufferPool {
     private synchronized  void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
+        Page page = data.get(pid).page;
+        if (page.isDirty() != null) {
+            DbFile databaseFile =
+                    Database.getCatalog().getDatabaseFile(pid.getTableId());
+            databaseFile.writePage(page);
+            page.markDirty(false, null);
+        }
     }
 
     /** Write all pages of the specified transaction to disk.
@@ -332,11 +342,19 @@ public class BufferPool {
      * Discards a page from the buffer pool.
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
-    private synchronized  void evictPage() throws DbException {
+    private synchronized  void evictPage() throws DbException{
         // some code goes here
         // not necessary for lab1
-        Node node = removeTail();
-
+        PageNode t = tail.pre;
+        while (t != head) {
+            Page page = data.get(t.pageId).page;
+            if (page.isDirty() == null) {
+                break;
+            }
+            t = t.pre;
+        }
+        if (t == head) throw new DbException("dirty to many");
+        discardPage(t.pageId);
     }
 
 
@@ -371,10 +389,12 @@ public class BufferPool {
      *
      * */
     // 将某一个页面从中间删除
-    private void moveToHead(Node node) {
+    private void moveToHead(PageNode node) {
+        removeNode(node);
+        insertNode(node);
     }
     //一定插入头部
-    private void insertNode(PageId pageId, Page v) {
+    private void insertNode(PageNode node) {
 //        head.lock.lock();
 //        try {
 //            node.next = head.next;
@@ -389,24 +409,18 @@ public class BufferPool {
 //        } finally {
 //            head.lock.unlock();
 //        }
-        Node node = new Node(pageId);
         node.next = head.next;
         node.pre = head;
         head.next.pre = node;
         head.next = node;
-        curNumPages ++;
-        data.put(pageId, v);
-
     }
+
     //删除尾部
-    private Node removeTail() {
-        Node node;
-        if (curNumPages < numPages) return null;
-        node = removeNode(tail.pre);
-        return node;
+    private PageNode removeTail() {
+        return removeNode(tail.pre);
     }
 
-    private Node removeNode(Node node) {
+    private PageNode removeNode(PageNode node) {
         node.pre.next = node.next;
         node.next.pre = node.pre;
         node.pre = null;
@@ -414,18 +428,20 @@ public class BufferPool {
         return node;
     }
 
-    private Node head;
-    private Node tail;
-    private ReentrantReadWriteLock lock; //改变双向链表中间节点的时候需要获取的节点
-    class Node {
+    private PageNode head;
+    private PageNode tail;
+    private final Object lock; //改变双向链表中间节点的时候需要获取的节点
+    class PageNode {
         PageId pageId;
-        Node next;
-        Node pre;
+        Page page;
+        PageNode next;
+        PageNode pre;
 
-        public Node(PageId pageId) {
+        public PageNode(PageId pageId, Page page) {
             this.pageId = pageId;
+            this.page = page;
         }
-        public Node() {
+        public PageNode() {
         }
 
     }

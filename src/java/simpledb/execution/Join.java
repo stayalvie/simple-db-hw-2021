@@ -82,6 +82,7 @@ public class Join extends Operator {
         // some code goes here
         child1.close();
         child2.close();
+        super.close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {

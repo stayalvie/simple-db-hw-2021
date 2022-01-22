@@ -24,7 +24,6 @@ public class Predicate implements Serializable {
         /**
          * Interface to access operations by integer value for command-line
          * convenience.
-         * 
          * @param i
          *            a valid integer Op index
          */

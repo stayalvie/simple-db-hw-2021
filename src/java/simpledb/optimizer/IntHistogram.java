@@ -2,6 +2,9 @@ package simpledb.optimizer;
 
 import simpledb.execution.Predicate;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /** A class to represent a fixed-width histogram over a single integer-based field.
  */
 public class IntHistogram {
@@ -22,8 +25,18 @@ public class IntHistogram {
      * @param min The minimum integer value that will ever be passed to this class for histogramming
      * @param max The maximum integer value that will ever be passed to this class for histogramming
      */
+    private List<Integer> buckets;
+    private int min;
+    private int max;
+    private double width;
+    private int ntups;
     public IntHistogram(int buckets, int min, int max) {
-    	// some code goes here
+        this.min = min;
+        this.max = max;
+        this.buckets = new ArrayList<>(buckets);
+        ntups = 0;
+        width = ((max - min + 1) * 1.0) / buckets;
+        for (int i = 0; i < buckets; i ++) this.buckets.add(0);
     }
 
     /**
@@ -32,9 +45,16 @@ public class IntHistogram {
      */
     public void addValue(int v) {
     	// some code goes here
+        if(v < min || v > max) return;
+        int t = buckets.get(index(v));
+        buckets.set(index(v),  ++ t);
+        ntups ++;
     }
-
-    /**
+    // 应该是向下取整
+    private int index(int v) {
+        return (int) ((v - min) / width);
+    }
+    /**其直方图的值
      * Estimate the selectivity of a particular predicate and operand on this table.
      * 
      * For example, if "op" is "GREATER_THAN" and "v" is 5, 
@@ -46,7 +66,13 @@ public class IntHistogram {
      */
     public double estimateSelectivity(Predicate.Op op, int v) {
 
-    	// some code goes here
+        switch (op) {
+            case EQUALS:
+                if (v > min || v < max) return 0.0;
+
+        }
+
+
         return -1.0;
     }
     

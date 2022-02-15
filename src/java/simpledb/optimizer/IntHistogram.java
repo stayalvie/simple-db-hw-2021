@@ -6,6 +6,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** A class to represent a fixed-width histogram over a single integer-based field.
+ *
+ * 这个优化是基于 扫描判断 最大值和最小值来进行的 判断要扫描的数量
+ *
+ * 直方图的扫描
+ *
+ * ？？？ 如何去得到一个数据构建这个直方图
+ *
  */
 public class IntHistogram {
 
@@ -52,7 +59,7 @@ public class IntHistogram {
     }
     // 应该是向下取整
     private int index(int v) {
-        return (int) ((v - min) / width);
+        return ((v - min) * buckets.size() / (max - min + 1));
     }
     /**其直方图的值
      * Estimate the selectivity of a particular predicate and operand on this table.
@@ -66,14 +73,40 @@ public class IntHistogram {
      */
     public double estimateSelectivity(Predicate.Op op, int v) {
 
+        if (v < min)
+            return (op == Predicate.Op.GREATER_THAN || op == Predicate.Op.GREATER_THAN_OR_EQ
+            || op == Predicate.Op.NOT_EQUALS) ? 1.0 : 0.0;
+        if (v > max)
+            return (op == Predicate.Op.LESS_THAN || op == Predicate.Op.LESS_THAN_OR_EQ
+             || op == Predicate.Op.NOT_EQUALS) ? 1.0 : 0.0;
+
+        int i = index(v);
+        int imax = (int) ((i + 1) * width + min);
+        int cnt = 0;
+        int imin = (int) (i * width + min);
         switch (op) {
-            case EQUALS:
-                if (v > min || v < max) return 0.0;
-
+            case EQUALS: return buckets.get(i) * 1.0 / ntups;
+            case GREATER_THAN:
+                for (int j = i + 1; j < buckets.size(); j ++)
+                    cnt += buckets.get(j);
+                return (buckets.get(i) * (imax - v) * 1.0 / width + cnt) / ntups;
+            case GREATER_THAN_OR_EQ:
+                for (int j = i; j < buckets.size(); j ++)
+                    cnt += buckets.get(j);
+                return cnt * 1.0 / ntups;
+            case LESS_THAN:
+                for (int j = 0; j < i; j ++)
+                    cnt += buckets.get(j);
+                return (cnt + buckets.get(i) * (v - imin) * 1.0 / width)/ ntups;
+            case LESS_THAN_OR_EQ:
+                for (int j = 0; j <= i; j ++)
+                    cnt += buckets.get(j);
+                return cnt * 1.0/ ntups;
+            case NOT_EQUALS:
+                return 1.0 - buckets.get(i) * 1.0 / ntups;
+            default:
+                return -1.0;
         }
-
-
-        return -1.0;
     }
     
     /**
